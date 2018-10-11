@@ -12,6 +12,17 @@ output:
 
 ##Markov multi-channel conversion *(or any!)* rate optimization
 I may do a follow-up or expansion to this on *why* multi-channel funnel optimization is important as well as a deeper explanation of the methods and models used. For now, this tool may be useful to those analysts or campaign managers with a general understanding of *at least* what markov chains are as well as their place in an overall multi-channel optimization strategy.
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(DT)
+library(googleAnalyticsR)
+library(googleAuthR)
+library(ChannelAttribution)
+library(highcharter)
+source('ga-auth.R')
+```
+
 ```{r ga_auth, echo=FALSE}
 
 googleAuthUI("auth")
@@ -143,16 +154,6 @@ token  <- callModule(googleAuth, "auth")
     return(out$viewId)
     
   })
-```
-
-```{r echo=FALSE, warning=FALSE, message=FALSE}
-library(tidyverse)
-library(DT)
-library(googleAnalyticsR)
-library(googleAuthR)
-library(ChannelAttribution)
-library(highcharter)
-source('ga-auth.R')
 ```
 
 ```{r echo=FALSE}
