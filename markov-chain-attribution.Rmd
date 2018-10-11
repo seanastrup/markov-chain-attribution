@@ -1,0 +1,253 @@
+---
+title: "Markov Model Attribution"
+author: "Sean Astrup - seanastrup@gmail.com"
+runtime: shiny
+css: www/my.css
+output: 
+  html_notebook:
+    code_folding: hide
+---
+
+####Post in progress. Stable development release updated on: 2018-10-10
+
+##Markov multi-channel conversion *(or any!)* rate optimization
+I may do a follow-up or expansion to this on *why* multi-channel funnel optimization is important as well as a deeper explanation of the methods and models used. For now, this tool may be useful to those analysts or campaign managers with a general understanding of *at least* what markov chains are as well as their place in an overall multi-channel optimization strategy.
+```{r ga_auth, echo=FALSE}
+
+googleAuthUI("auth")
+token  <- callModule(googleAuth, "auth")
+
+###################################################
+########## VIEW ID SELECTION CONTROLS #############
+###################################################
+  ga_accounts <- reactive({
+    
+    req(token())
+    
+    with_shiny(ga_account_list, shiny_access_token = token())
+    
+  })
+  
+  # selected_id <- callModule(authDropdown, 'auth_menu', ga.table = ga_accounts)
+  
+  AccountTable <- reactive({
+    
+    ga_accounts()
+    
+  })
+  
+  pList <- reactive({
+    
+    ga.table <- ga_accounts()
+    
+    ga.table[,c('accountName','webPropertyId','websiteUrl','viewName', 'viewId')]
+    
+  })
+  
+  ##############################
+  ### UPDATE SELECTION VALUES ##
+  ##############################
+  observe({
+    
+    validate(
+      need(pList(), "Need profiles")
+    )
+    
+    pList  <- pList()
+    
+    AccountChoices <- unique(pList$accountName)
+    
+    updateSelectizeInput(session, 
+                      "Accounts",
+                      label = "Accounts",
+                      choices = AccountChoices, 
+                      selected = AccountChoices[1],
+                      server = TRUE)
+    
+  })
+  
+  observe({
+      
+      validate(
+        need(input$Accounts, "Need accounts")
+      )
+      pList  <- pList()
+      
+      pList <- pList[input$Accounts == pList$accountName,]
+      
+      PropertyChoices <- pList$websiteUrl
+      
+      updateSelectizeInput(session, 
+                        "Properties", label="Properties",
+                        choices = PropertyChoices, 
+                        selected = PropertyChoices[1],
+                        server = TRUE)
+    
+    })
+  
+  observe({
+    
+    validate(
+      need(input$Properties, "Need web")
+    )
+    
+    pList <- pList()
+    
+    pList <- pList[input$Properties == pList$websiteUrl,]
+    
+    ViewChoices <- pList$viewId 
+    
+    names(ViewChoices) <- paste(pList$viewName, pList$viewId)
+    
+    updateSelectizeInput(session, 
+                         "Views", label = "Views",
+                         choices = ViewChoices, 
+                         selected = ViewChoices[1],
+                         server = TRUE)
+  })
+  
+  GaAccount <- reactive({
+    
+    validate(
+      need(pList(), "Need profiles")
+    )
+    
+    pList  <- pList()
+    
+    out <- unique(pList$accountName)
+    
+    return(out[1])
+    
+  })
+  GaProperty <- reactive({
+    
+    validate(
+      need(input$Properties, "Please login")
+    )
+    
+    pList <- pList()
+    out <- pList[input$Accounts == pList$accountName,]
+    
+    return(out$websiteUrl)
+    
+  })
+  GaView <- reactive({
+    
+    validate(
+      need(input$Views, "Please login")
+    )
+    pList <- pList()
+    
+    out <- pList[input$Views == pList$viewId,]
+    
+    return(out$viewId)
+    
+  })
+```
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(DT)
+library(googleAnalyticsR)
+library(googleAuthR)
+library(ChannelAttribution)
+library(highcharter)
+source('ga-auth.R')
+```
+
+```{r echo=FALSE}
+shiny::inputPanel(
+  shiny::selectizeInput(inputId = 'Accounts', label = 'Accounts', choices = NULL),
+  shiny::selectizeInput(inputId = 'Properties', label = 'Properties', choices = NULL),
+  shiny::selectizeInput(inputId = 'Views', label = 'Views', choices = NULL)
+)
+```
+
+
+```{r}
+get_device_sessions <- reactive({
+    
+    req(GaView())
+    gaid <- GaView()
+    with_shiny(google_analytics,
+               viewId = gaid,
+               date_range = c(lubridate::today() - 120, lubridate::today()),
+               metrics = c('sessions'),
+               dimensions = c('date', 'deviceCategory'),
+               shiny_access_token = token())
+    
+  })
+
+get_total_conversions <- reactive({
+  
+  req(GaView())
+  gaid <- GaView()
+  Conversions <- 
+    with_shiny(google_analytics,
+               viewId = gaid,
+               date_range = c(lubridate::today() - 120, lubridate::today()),
+               metrics = c('transactions', 'sessions'),
+               dimensions = c('sourceMedium'),
+               shiny_access_token = token()
+               )
+    
+  # Clean junk from results 
+  Conversions$sourceMedium <- gsub(" / ", "/", Conversions[,1])              
+  Conversions$sourceMedium <- gsub(":?(NA|CLICK|NA):?", "", Conversions[,1]) 
+  Conversions$sourceMedium <- as.numeric(Conversions[,2]) 
+  
+  # Conversions$sessions <- sample(3000, size = nrow(Conversions), replace = TRUE)     # random noise for dev
+  # Conversions$transactions <- sample(100, size = nrow(Conversions), replace = TRUE)  # random noise for dev
+  
+  Conversions <- 
+    Conversions %>% 
+    mutate(ConversionRate = ifelse(transactions == 0, 0, transactions / sessions))
+  
+  return(Conversions)
+  
+})
+
+DailyDeviceSessions <- renderHighchart({
+    
+    # only trigger once authenticated
+    req(get_device_sessions())
+    
+    gadata <- get_device_sessions()
+    
+    # gadata$sessions <- sample(3000, size = nrow(gadata), replace = TRUE)  # random noise for dev
+    
+    hchart(gadata, 'spline' , hcaes(x = date, y = sessions, 
+                                                 group = deviceCategory)) %>%
+      hc_xAxis(
+        title = list( 
+          text = ''
+        )
+      ) %>% 
+      hc_yAxis(
+        title = list( 
+          text = ''
+        )
+      ) %>% 
+      hc_title(text = 'Device Sessions By Date') 
+      
+  })
+TotalConversions <- DT::renderDataTable({
+  
+    TotalConversions <- get_total_conversions() 
+    
+    # TotalConversions$ConversionRate <- scales::percent(TotalConversions$ConversionsRate)
+    TotalConversions %>%
+      datatable(options = list(
+        pageLength = 7, 
+        searching = FALSE
+        )
+      ) %>% 
+      formatCurrency(c('sourceMedium', 'transactions', 'sessions'), '', digits = 0) %>% # format as currency but leave indicator blank. (For big.mark formatting)
+      formatPercentage('ConversionRate', 2)
+
+  })
+
+TotalConversions
+DailyDeviceSessions
+```
+
