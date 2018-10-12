@@ -117,6 +117,12 @@ token  <- callModule(googleAuth, "auth")
                          server = TRUE)
   })
   
+  # observe({
+  #   
+  #   
+  #   
+  # })
+  
   GaAccount <- reactive({
     
     validate(
@@ -154,6 +160,27 @@ token  <- callModule(googleAuth, "auth")
     return(out$viewId)
     
   })
+  
+  # GoalsList <- reactive({
+  # 
+  #   validate(
+  #     need(input$Views, "Please login")
+  #   )
+  # 
+  #   Account <- GaAccount()
+  #   Property <- GaProperty()
+  #   View <- GaView()
+  # 
+  #   Goals <- with_shiny(ga_goal_list,
+  #                       Account, 
+  #                       Property, 
+  #                       View, 
+  #                       shiny_access_token = token())
+  #   
+  #   return(Goals)
+  # 
+  # })
+  
 ```
 
 ```{r echo=FALSE}
@@ -179,76 +206,164 @@ get_device_sessions <- reactive({
     
   })
 
+get_total_sessions <- reactive({
+  
+  req(GaView())
+  gaid <- GaView()
+  Sessions <- 
+    with_shiny(google_analytics_3,
+               id = gaid,
+               start = lubridate::today() - 120, 
+               end =  lubridate::today(),
+               metrics = c('totalConversions'),
+               dimensions = c('sourceMediumPath'),
+               type = 'mcf',
+               filters = 'mcf:conversionGoalNumber==001', 
+               shiny_access_token = token()
+               )
+  names(Sessions) <- c('SourceMediumPath','sessions')
+  
+  # Clean junk from results 
+  Sessions$SourceMediumPath <- gsub(" / ", "/", Sessions[,1])              
+  Sessions$SourceMediumPath <- gsub(":?(NA|CLICK|NA):?", "", Sessions[,1]) 
+  Sessions$SourceMediumPath <- as.numeric(Sessions[,2]) 
+  
+  Sessions$sessions <- sample(3000, size = nrow(Sessions), replace = TRUE)     # random noise for dev
+  
+  return(Sessions)
+  
+})
+
 get_total_conversions <- reactive({
   
   req(GaView())
   gaid <- GaView()
   Conversions <- 
-    with_shiny(google_analytics,
-               viewId = gaid,
-               date_range = c(lubridate::today() - 120, lubridate::today()),
-               metrics = c('transactions', 'sessions'),
-               dimensions = c('sourceMedium'),
+    with_shiny(google_analytics_3,
+               id = gaid,
+               start = lubridate::today() - 120, 
+               end =  lubridate::today(),
+               metrics = c('totalConversions'),
+               dimensions = c('sourceMediumPath'),
+               type = 'mcf',
+               filters = 'mcf:conversionType==Transaction',
                shiny_access_token = token()
                )
     
+  names(Conversions) <- c('SourceMediumPath', 'transactions')
+  
   # Clean junk from results 
   Conversions$sourceMedium <- gsub(" / ", "/", Conversions[,1])              
   Conversions$sourceMedium <- gsub(":?(NA|CLICK|NA):?", "", Conversions[,1]) 
   Conversions$sourceMedium <- as.numeric(Conversions[,2]) 
-  
-  # Conversions$sessions <- sample(3000, size = nrow(Conversions), replace = TRUE)     # random noise for dev
-  # Conversions$transactions <- sample(100, size = nrow(Conversions), replace = TRUE)  # random noise for dev
-  
-  Conversions <- 
-    Conversions %>% 
-    mutate(ConversionRate = ifelse(transactions == 0, 0, transactions / sessions))
+  Conversions$transactions <- Conversions$transactions %>% replace_na(0)
+    
+  Conversions$transactions <- sample(100, size = nrow(Conversions), replace = TRUE)  # random noise for dev
   
   return(Conversions)
   
 })
 
-DailyDeviceSessions <- renderHighchart({
-    
-    # only trigger once authenticated
-    req(get_device_sessions())
-    
-    gadata <- get_device_sessions()
-    
-    # gadata$sessions <- sample(3000, size = nrow(gadata), replace = TRUE)  # random noise for dev
-    
-    hchart(gadata, 'spline' , hcaes(x = date, y = sessions, 
-                                                 group = deviceCategory)) %>%
-      hc_xAxis(
-        title = list( 
-          text = ''
-        )
-      ) %>% 
-      hc_yAxis(
-        title = list( 
-          text = ''
-        )
-      ) %>% 
-      hc_title(text = 'Device Sessions By Date') 
-      
-  })
-TotalConversions <- DT::renderDataTable({
+make_total_data <- reactive({
   
-    TotalConversions <- get_total_conversions() 
-    
-    # TotalConversions$ConversionRate <- scales::percent(TotalConversions$ConversionsRate)
-    TotalConversions %>%
-      datatable(options = list(
-        pageLength = 7, 
-        searching = FALSE
-        )
-      ) %>% 
-      formatCurrency(c('sourceMedium', 'transactions', 'sessions'), '', digits = 0) %>% # format as currency but leave indicator blank. (For big.mark formatting)
-      formatPercentage('ConversionRate', 2)
+  Conversions <- get_total_conversions()
+  Sessions <- get_total_sessions()
+  
+  Data <- full_join(Conversions, Sessions, by = 'SourceMediumPath')
+  
+  Data <- 
+    Data %>% 
+    mutate(ConversionRate = ifelse(transactions == 0, 0, transactions / sessions))
+  
+  return(Data)
+  
+})
 
-  })
+MarkovModel <- reactive({
+  
+  Data <- make_total_data()
+  
+  Model <- ChannelAttribution::markov_model(Data, var_path = 'sourceMedium', 
+                                            var_conv = 'transactions',
+                                            var_null = 'null', 
+                                            order = 1, nsim = NULL, 
+                                            max_step = NULL, out_more = FALSE)
+  
+  return(Model)
+  
+})
 
-TotalConversions
-DailyDeviceSessions
+HeuristicModel <- reactive({
+  
+  Data <- make_total_data()
+  
+  Model <- ChannelAttribution::heuristic_models(Data, var_path = 'sourceMedium', 
+                                                var_conv = 'transactions', 
+                                                order = 1, nsim = NULL, 
+                                                max_step = NULL, out_more = FALSE)
+  
+  return(Model)
+  
+})
+
+ModeledData <- reactive({
+  
+  MarkovModel <- MarkovModel()
+  HeuristicModel <- HeuristicModel()
+  
+  ModeledData <- full_join(MarkovModel, HeuristicModel, by = 'sourceMedium')
+  
+})
+
+# shiny::renderText({class(GoalsList())})
+
+A <- renderTable({get_total_sessions()})
+B <- renderTable(({get_total_conversions()}))
+A
+B
+
+
+# DailyDeviceSessions <- renderHighchart({
+#     
+#     # only trigger once authenticated
+#     req(get_device_sessions())
+#     
+#     gadata <- get_device_sessions()
+#     
+#     gadata$sessions <- sample(3000, size = nrow(gadata), replace = TRUE)  # random noise for dev
+#     
+#     hchart(gadata, 'spline' , hcaes(x = date, y = sessions, 
+#                                                  group = deviceCategory)) %>%
+#       hc_xAxis(
+#         title = list( 
+#           text = ''
+#         )
+#       ) %>% 
+#       hc_yAxis(
+#         title = list( 
+#           text = ''
+#         )
+#       ) %>% 
+#       hc_title(text = 'Device Sessions By Date') 
+#       
+#   })
+# TotalConversions <- DT::renderDataTable({
+#   
+#     TotalConversions <- get_total_conversions() 
+#     
+#     # TotalConversions$ConversionRate <- scales::percent(TotalConversions$ConversionsRate)
+#     TotalConversions %>%
+#       datatable(options = list(
+#         pageLength = 7, 
+#         searching = FALSE
+#         )
+#       ) %>% 
+#       formatCurrency(c('sourceMedium', 'transactions', 'sessions'), '', digits = 0) %>% # format as currency but leave indicator blank. (For big.mark formatting)
+#       formatPercentage('ConversionRate', 2)
+# 
+#   })
+# 
+# TotalConversions
+# DailyDeviceSessions
 ```
 
