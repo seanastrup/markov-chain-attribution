@@ -8,10 +8,19 @@ output:
     code_folding: hide
 ---
 
-####Post in progress. Stable development release updated on: 2018-10-10
+####Post in progress. Stable development release updated on: 2018-10-14
+Current State:   
+* Session data is correct and pulls most recent 120 days by source medium path.  
+* Conversion data is **randomly generated for development and testing**. Results should **NOT** currently be used for **ANYTHING**. 
 
 ##Markov multi-channel conversion *(or any!)* rate optimization
 I may do a follow-up or expansion to this on *why* multi-channel funnel optimization is important as well as a deeper explanation of the methods and models used. For now, this tool may be useful to those analysts or campaign managers with a general understanding of *at least* what markov chains are as well as their place in an overall multi-channel optimization strategy.
+
+In order to use this tool you'll need: 
+1. Access to a Google Analytics account with multi-channel funnels enabled and set up:
+  i) We need to set up a custom, destination-based goal on each Google Analytics view in order to measure visits through multi-channel funnels so if you are an agency without access to create goals on client accounts, you'll need to coach them through that. 
+  ii) Once you have access to create goals, create a new custom goal that will count a goal completion **every time a user visits**. If you don't know how to set this up, follow my separate post with instructions here <link>
+
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
 library(tidyverse)
@@ -117,12 +126,6 @@ token  <- callModule(googleAuth, "auth")
                          server = TRUE)
   })
   
-  # observe({
-  #   
-  #   
-  #   
-  # })
-  
   GaAccount <- reactive({
     
     validate(
@@ -160,26 +163,15 @@ token  <- callModule(googleAuth, "auth")
     return(out$viewId)
     
   })
-  
-  # GoalsList <- reactive({
-  # 
-  #   validate(
-  #     need(input$Views, "Please login")
-  #   )
-  # 
-  #   Account <- GaAccount()
-  #   Property <- GaProperty()
-  #   View <- GaView()
-  # 
-  #   Goals <- with_shiny(ga_goal_list,
-  #                       Account, 
-  #                       Property, 
-  #                       View, 
-  #                       shiny_access_token = token())
-  #   
-  #   return(Goals)
-  # 
-  # })
+  GaGoal <- reactive({
+    
+    validate(
+      need(input$GoalId, 'Choose Goal Id')
+    )
+    
+    return(input$GoalId)
+    
+  })
   
 ```
 
@@ -187,7 +179,9 @@ token  <- callModule(googleAuth, "auth")
 shiny::inputPanel(
   shiny::selectizeInput(inputId = 'Accounts', label = 'Accounts', choices = NULL),
   shiny::selectizeInput(inputId = 'Properties', label = 'Properties', choices = NULL),
-  shiny::selectizeInput(inputId = 'Views', label = 'Views', choices = NULL)
+  shiny::selectizeInput(inputId = 'Views', label = 'Views', choices = NULL), 
+  shiny::textInput(inputId = 'GoalId', label = 'Every Visit Goal Id',
+                   placeholder = '3 digit custom goal ID')
 )
 ```
 
@@ -209,7 +203,12 @@ get_device_sessions <- reactive({
 get_total_sessions <- reactive({
   
   req(GaView())
+  req(GaGoal())
   gaid <- GaView()
+  GoalId = GaGoal()
+  McfFilter <- paste0('mcf:conversionGoalNumber==', GoalId)
+  
+  
   Sessions <- 
     with_shiny(google_analytics_3,
                id = gaid,
@@ -218,7 +217,7 @@ get_total_sessions <- reactive({
                metrics = c('totalConversions'),
                dimensions = c('sourceMediumPath'),
                type = 'mcf',
-               filters = 'mcf:conversionGoalNumber==001', 
+               filters = McfFilter, 
                shiny_access_token = token()
                )
   names(Sessions) <- c('SourceMediumPath','sessions')
@@ -267,7 +266,9 @@ get_total_conversions <- reactive({
 make_total_data <- reactive({
   
   Conversions <- get_total_conversions()
+  Conversions$SourceMediumPath <- as.character(Conversions$SourceMediumPath)
   Sessions <- get_total_sessions()
+  Sessions$SourceMediumPath <- as.character(Sessions$SourceMediumPath)
   
   Data <- full_join(Conversions, Sessions, by = 'SourceMediumPath')
   
@@ -283,12 +284,9 @@ MarkovModel <- reactive({
   
   Data <- make_total_data()
   
-  Model <- ChannelAttribution::markov_model(Data, var_path = 'sourceMedium', 
-                                            var_conv = 'transactions',
-                                            var_null = 'null', 
-                                            order = 1, nsim = NULL, 
-                                            max_step = NULL, out_more = FALSE)
-  
+  Model <- ChannelAttribution::markov_model(Data, var_path = 'SourceMediumPath', 
+                                            var_conv = 'transactions')
+
   return(Model)
   
 })
@@ -297,11 +295,9 @@ HeuristicModel <- reactive({
   
   Data <- make_total_data()
   
-  Model <- ChannelAttribution::heuristic_models(Data, var_path = 'sourceMedium', 
-                                                var_conv = 'transactions', 
-                                                order = 1, nsim = NULL, 
-                                                max_step = NULL, out_more = FALSE)
-  
+  Model <- ChannelAttribution::heuristic_models(Data, var_path = 'SourceMediumPath', 
+                                                var_conv = 'transactions')
+
   return(Model)
   
 })
@@ -311,17 +307,16 @@ ModeledData <- reactive({
   MarkovModel <- MarkovModel()
   HeuristicModel <- HeuristicModel()
   
-  ModeledData <- full_join(MarkovModel, HeuristicModel, by = 'sourceMedium')
+  ModeledData <- full_join(MarkovModel, HeuristicModel, by = 'channel_name')
   
 })
 
-# shiny::renderText({class(GoalsList())})
 
-A <- renderTable({get_total_sessions()})
-B <- renderTable(({get_total_conversions()}))
-A
-B
-
+renderTable({make_total_data()})
+renderTable({MarkovModel()})
+renderTable({HeuristicModel()})
+renderTable({ModeledData()})
+renderText({GaGoal()})
 
 # DailyDeviceSessions <- renderHighchart({
 #     
