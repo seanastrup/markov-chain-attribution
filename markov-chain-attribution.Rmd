@@ -6,6 +6,7 @@ css: www/my.css
 output: 
   html_notebook:
     code_folding: hide
+    theme: united
 ---
 
 ####Post in progress. Stable development release updated on: 2018-10-17
@@ -31,6 +32,7 @@ library(googleAuthR)
 library(ChannelAttribution)
 library(highcharter)
 source('ga-auth.R')
+DEPLOYMENT_TAG <- 'public'
 ```
 
 ```{r ga_auth, echo=FALSE}
@@ -188,6 +190,7 @@ shiny::inputPanel(
 
 
 ```{r echo=FALSE}
+
 get_device_sessions <- reactive({
     
     req(GaView())
@@ -319,7 +322,7 @@ renderHighchart({
 
     gadata <- get_device_sessions()
 
-    gadata$sessions <- sample(3000, size = nrow(gadata), replace = TRUE)  # random noise for dev
+    # gadata$sessions <- sample(3000, size = nrow(gadata), replace = TRUE)  # random noise for dev
 
     hchart(gadata, 'spline' , hcaes(x = date, y = sessions,
                                                  group = deviceCategory)) %>%
@@ -337,29 +340,9 @@ renderHighchart({
   
 })
 
-
 renderTable({make_total_data()})
-# renderTable({MarkovModel()})
-# renderTable({HeuristicModel()})
+
 renderTable({ModeledData()})
 
-# TotalConversions <- DT::renderDataTable({
-#   
-#     TotalConversions <- get_total_conversions() 
-#     
-#     # TotalConversions$ConversionRate <- scales::percent(TotalConversions$ConversionsRate)
-#     TotalConversions %>%
-#       datatable(options = list(
-#         pageLength = 7, 
-#         searching = FALSE
-#         )
-#       ) %>% 
-#       formatCurrency(c('sourceMedium', 'transactions', 'sessions'), '', digits = 0) %>% # format as currency but leave indicator blank. (For big.mark formatting)
-#       formatPercentage('ConversionRate', 2)
-# 
-#   })
-# 
-# TotalConversions
-# DailyDeviceSessions
 ```
 
