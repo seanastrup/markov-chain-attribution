@@ -8,7 +8,7 @@ output:
     code_folding: hide
 ---
 
-####Post in progress. Stable development release updated on: 2018-10-14
+####Post in progress. Stable development release updated on: 2018-10-17
 Current State:   
 * Session data is correct and pulls most recent 120 days by source medium path.  
 * Conversion data is **randomly generated for development and testing**. Results should **NOT** currently be used for **ANYTHING**. 
@@ -16,10 +16,11 @@ Current State:
 ##Markov multi-channel conversion *(or any!)* rate optimization
 I may do a follow-up or expansion to this on *why* multi-channel funnel optimization is important as well as a deeper explanation of the methods and models used. For now, this tool may be useful to those analysts or campaign managers with a general understanding of *at least* what markov chains are as well as their place in an overall multi-channel optimization strategy.
 
-In order to use this tool you'll need: 
+In order to use this tool you'll need:  
+
 1. Access to a Google Analytics account with multi-channel funnels enabled and set up:
-  i) We need to set up a custom, destination-based goal on each Google Analytics view in order to measure visits through multi-channel funnels so if you are an agency without access to create goals on client accounts, you'll need to coach them through that. 
-  ii) Once you have access to create goals, create a new custom goal that will count a goal completion **every time a user visits**. If you don't know how to set this up, follow my separate post with instructions here <link>
+ i) We need to set up a custom, destination-based goal on each Google Analytics view in order to measure visits through multi-channel funnels so if you are an agency without access to create goals on client accounts, you'll need to coach them through that.
+ ii) Once you have access to create goals, create a new custom goal that will count a goal completion **every time a user visits**. If you don't know how to set this up, follow my separate post with instructions here [post link]
 
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
@@ -186,7 +187,7 @@ shiny::inputPanel(
 ```
 
 
-```{r}
+```{r echo=FALSE}
 get_device_sessions <- reactive({
     
     req(GaView())
@@ -227,7 +228,7 @@ get_total_sessions <- reactive({
   Sessions$SourceMediumPath <- gsub(":?(NA|CLICK|NA):?", "", Sessions[,1]) 
   Sessions$SourceMediumPath <- as.numeric(Sessions[,2]) 
   
-  Sessions$sessions <- sample(3000, size = nrow(Sessions), replace = TRUE)     # random noise for dev
+  # Sessions$sessions <- sample(3000, size = nrow(Sessions), replace = TRUE)     # random noise for dev
   
   return(Sessions)
   
@@ -311,37 +312,37 @@ ModeledData <- reactive({
   
 })
 
+renderHighchart({
+  
+    # only trigger once authenticated
+    req(get_device_sessions())
+
+    gadata <- get_device_sessions()
+
+    gadata$sessions <- sample(3000, size = nrow(gadata), replace = TRUE)  # random noise for dev
+
+    hchart(gadata, 'spline' , hcaes(x = date, y = sessions,
+                                                 group = deviceCategory)) %>%
+      hc_xAxis(
+        title = list(
+          text = ''
+        )
+      ) %>%
+      hc_yAxis(
+        title = list(
+          text = ''
+        )
+      ) %>%
+      hc_title(text = 'Device Sessions By Date')
+  
+})
+
 
 renderTable({make_total_data()})
-renderTable({MarkovModel()})
-renderTable({HeuristicModel()})
+# renderTable({MarkovModel()})
+# renderTable({HeuristicModel()})
 renderTable({ModeledData()})
-renderText({GaGoal()})
 
-# DailyDeviceSessions <- renderHighchart({
-#     
-#     # only trigger once authenticated
-#     req(get_device_sessions())
-#     
-#     gadata <- get_device_sessions()
-#     
-#     gadata$sessions <- sample(3000, size = nrow(gadata), replace = TRUE)  # random noise for dev
-#     
-#     hchart(gadata, 'spline' , hcaes(x = date, y = sessions, 
-#                                                  group = deviceCategory)) %>%
-#       hc_xAxis(
-#         title = list( 
-#           text = ''
-#         )
-#       ) %>% 
-#       hc_yAxis(
-#         title = list( 
-#           text = ''
-#         )
-#       ) %>% 
-#       hc_title(text = 'Device Sessions By Date') 
-#       
-#   })
 # TotalConversions <- DT::renderDataTable({
 #   
 #     TotalConversions <- get_total_conversions() 
