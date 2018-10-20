@@ -9,20 +9,18 @@ output:
     theme: united
 ---
 
-####Post in progress. Stable development release updated on: 2018-10-17
+####Post in progress. Stable development release updated on: 2018-10-20
 Current State:   
-* Session data is correct and pulls most recent 120 days by source medium path.  
 * Conversion data is **randomly generated for development and testing**. Results should **NOT** currently be used for **ANYTHING**. 
 
-##Markov multi-channel conversion *(or any!)* rate optimization
+##Markov multi-channel conversion optimization
 I may do a follow-up or expansion to this on *why* multi-channel funnel optimization is important as well as a deeper explanation of the methods and models used. For now, this tool may be useful to those analysts or campaign managers with a general understanding of *at least* what markov chains are as well as their place in an overall multi-channel optimization strategy.
 
 In order to use this tool you'll need:  
 
 1. Access to a Google Analytics account with multi-channel funnels enabled and set up:
- i) We need to set up a custom, destination-based goal on each Google Analytics view in order to measure visits through multi-channel funnels so if you are an agency without access to create goals on client accounts, you'll need to coach them through that.
- ii) Once you have access to create goals, create a new custom goal that will count a goal completion **every time a user visits**. If you don't know how to set this up, follow my separate post with instructions here [post link]
-
+    i) We need to set up a custom, destination-based goal on each Google Analytics view in order to measure visits through multi-channel funnels so if you are an agency without access to create goals on client accounts, you'll need to coach them through that.
+    ii) Once you have access to create goals, create a new custom goal that will count a goal completion **every time a user visits**. If you don't know how to set this up, follow my separate post with instructions here [post link]
 
 ```{r echo=FALSE, warning=FALSE, message=FALSE}
 library(tidyverse)
@@ -31,12 +29,12 @@ library(googleAnalyticsR)
 library(googleAuthR)
 library(ChannelAttribution)
 library(highcharter)
+library(ggplot2)
 source('ga-auth.R')
 DEPLOYMENT_TAG <- 'public'
 ```
 
 ```{r ga_auth, echo=FALSE}
-
 googleAuthUI("auth")
 token  <- callModule(googleAuth, "auth")
 
@@ -177,32 +175,173 @@ token  <- callModule(googleAuth, "auth")
   })
   
 ```
+```{r}
+shiny::radioButtons(inputId = 'TestSwitch', label = '', 
+                    inline = TRUE, 
+                    choices = c('Example Post Data' = 'TestData',
+                                'Use My Own Data' = 'UserData')
+                    )
+```
 
 ```{r echo=FALSE}
 shiny::inputPanel(
-  shiny::selectizeInput(inputId = 'Accounts', label = 'Accounts', choices = NULL),
-  shiny::selectizeInput(inputId = 'Properties', label = 'Properties', choices = NULL),
-  shiny::selectizeInput(inputId = 'Views', label = 'Views', choices = NULL), 
+  shiny::selectizeInput(inputId = 'Accounts', label = 'Accounts', choices = NULL, 
+                        width = '90%'),
+  shiny::selectizeInput(inputId = 'Properties', label = 'Properties', choices = NULL, width = '90%'),
+  shiny::selectizeInput(inputId = 'Views', label = 'Views', choices = NULL, 
+                        width = '90%'), 
   shiny::textInput(inputId = 'GoalId', label = 'Every Visit Goal Id',
-                   placeholder = '3 digit custom goal ID')
-)
+                   placeholder = '3 digit custom goal ID', width = '90%')
+) 
+shiny::radioButtons(inputId = 'DateFilter', label = 'Dates', inline = TRUE,
+                    choices = c('1 week' = 'oneWeek', '1 month' = 'oneMonth', '3 months' = 'threeMonths', 
+                                '1 year' = 'oneYear'))
+```
+
+&nbsp;  
+
+## Raw Multi-Channel Path Information
+We start with taking a look at what our raw data looks like. A simple pull from the multi-channel report section of Google Analytics is a very powerful piece of information. ***Note:*** when viewing non-test data, some cleaning has been done to the source/medium paths (e.g. removing spaces and spam): 
+```{r echo = FALSE}
+renderDataTable({
+  
+  Data <- test_data()[, 2:4]
+  
+  datatable(Data,
+            rownames = FALSE,
+            options = list(
+              pageLength = 5, 
+              searching = FALSE, 
+              bLengthChange = FALSE
+  ))
+
+})
+```
+&nbsp;  
+
+Each record here represents a particular source/medium path combination and its result in either a purchase (transactions), or non-converted session (null). If you've enabled multi-channel funnels in Google Analytics and have also set up a custom goal that records a completion every time someone visits your site, you can enter that goal ID above to see the **overall conversion rate** across your source medium paths:
+
+```{r echo = FALSE}
+renderDataTable({
+  
+  Data <- make_total_data()
+  
+  datatable(Data, 
+            rownames = FALSE,
+            options = list(
+              pageLength = 5, 
+              searching = FALSE, 
+              bLengthChange = FALSE
+            ))
+  
+})
+```
+&nbsp;  
+
+## Modeling The Information  
+Using the handy ChannelAttribution R package, we can evalueate each source/medium and assign a total conversion number to each as well as conversion numbers using first, last, and linear touch models.
+
+```{r echo = FALSE}
+renderDataTable({
+  
+  Data <- ModeledData()
+  
+  datatable(Data, 
+            rownames = FALSE, 
+            options = list(
+              pageLength = 5, 
+              searching = FALSE, 
+              bLengthChange = FALSE))
+  
+})
+```
+&nbsp;  
+
+## Visualizing The Attribution Strategies
+A nice feature of the markov model returned from the ChannelAttribution package is the transition matrix. This information indicates the probabliity that a user in a given source/medium will end up in the next (e.g. A user visits the site from "channel_0", and returns to the site through "channel_1"). With the raw data from our model we can make an informative visualization using ggplot2: 
+```{r echo = FALSE}
+renderPlot({
+  
+  df_plot_trans <- MarkovModel()$transition_matrix
+ 
+  cols <- c("#e7f0fa", "#c9e2f6", "#95cbee", "#0099dc", "#4ab04a", "#ffd73e", "#eec73a",
+            "#e29421", "#e29421", "#f05336", "#ce472e")
+  t <- max(df_plot_trans$transition_probability)
+
+  return(
+    ggplot(df_plot_trans, aes(y = channel_from, x = channel_to, fill = transition_probability)) +
+            theme_minimal() +
+            geom_tile(colour = "white", width = .9, height = .9) +
+            scale_fill_gradientn(colours = cols, limits = c(0, t),
+                                 breaks = seq(0, t, by = t/4),
+                                 labels = c("0", round(t/4*1, 2), round(t/4*2, 2), round(t/4*3, 2), round(t/4*4, 2)),
+                                 guide = guide_colourbar(ticks = T, nbin = 50, barheight = .5, label = T, barwidth = 10)) +
+            geom_text(aes(label = round(transition_probability, 2)), fontface = "bold", size = 4) +
+            theme(legend.position = 'bottom',
+                  legend.direction = "horizontal",
+                  panel.grid.major = element_blank(),
+                  panel.grid.minor = element_blank(),
+                  plot.title = element_text(size = 20, face = "bold", vjust = 2, color = 'black', lineheight = 0.8),
+                  axis.title.x = element_text(size = 24, face = "bold"),
+                  axis.title.y = element_text(size = 24, face = "bold"),
+                  axis.text.y = element_text(size = 8, face = "bold", color = 'black'),
+                  axis.text.x = element_text(size = 8, angle = 90, hjust = 0.5, vjust = 0.5, face = "plain")) +
+            ggtitle("Transition matrix heatmap")
+  )
+})
 ```
 
 
 ```{r echo=FALSE}
 
-get_device_sessions <- reactive({
+test_data <- function(){
+  
+  df2 <- data.frame(client_id = sample(c(1:1000), 5000, replace = TRUE),
+                    date = sample(c(1:32), 5000, replace = TRUE),
+                    channel = sample(c(0:9), 5000, replace = TRUE,
+                                     prob = c(0.1, 0.15, 0.05, 0.07, 0.11, 0.07, 0.13, 0.1, 0.06, 0.16)))
+  df2$date <- as.Date(df2$date, origin = "2015-01-01")
+  df2$channel <- paste0('channel_', df2$channel)
+   
+  # aggregating channels to the paths for each customer
+  df2 <- df2 %>%
+          arrange(client_id, date) %>%
+          group_by(client_id) %>%
+          summarise(SourceMediumPath = paste(channel, collapse = ' > '),
+                    # assume that all paths were finished with conversion
+                    transactions = 1,
+                    null = 0) %>%
+          ungroup()
+  
+  return(df2)
     
-    req(GaView())
-    gaid <- GaView()
-    with_shiny(google_analytics,
-               viewId = gaid,
-               date_range = c(lubridate::today() - 120, lubridate::today()),
-               metrics = c('sessions'),
-               dimensions = c('date', 'deviceCategory'),
-               shiny_access_token = token())
-    
-  })
+}
+
+test_rate_data <- function(){
+  
+  Data <- data.frame(SourceMediumPath = c('channel_0', 'channel_1', 'channel_2', 
+                                      'channel_3', 'channel_4', 'channel_5', 
+                                      'channel_6', 'channel_7', 'channel_8', 
+                                      'channel_9'), 
+                     Sessions = sample(5000:8000, size = 10), 
+                     transactions = sample(500:1000, size = 10))
+  
+  Data <- Data %>% mutate(ConversionRate = transactions / Sessions)
+  
+  
+  return(Data)
+  
+}
+
+DateFilter <- reactive ({
+  
+  switch(input$DateFilter,
+   'oneWeek'     = 7,
+   'oneMonth'    = 30,
+   'threeMonths' = 90,
+   'oneYear'     = 365)
+
+})  
 
 get_total_sessions <- reactive({
   
@@ -216,7 +355,7 @@ get_total_sessions <- reactive({
   Sessions <- 
     with_shiny(google_analytics_3,
                id = gaid,
-               start = lubridate::today() - 120, 
+               start = lubridate::today() - DateFilter(), 
                end =  lubridate::today(),
                metrics = c('totalConversions'),
                dimensions = c('sourceMediumPath'),
@@ -229,7 +368,7 @@ get_total_sessions <- reactive({
   # Clean junk from results 
   Sessions$SourceMediumPath <- gsub(" / ", "/", Sessions[,1])              
   Sessions$SourceMediumPath <- gsub(":?(NA|CLICK|NA):?", "", Sessions[,1]) 
-  Sessions$SourceMediumPath <- as.numeric(Sessions[,2]) 
+  Sessions$sessions <- as.numeric(Sessions[,2]) 
   
   # Sessions$sessions <- sample(3000, size = nrow(Sessions), replace = TRUE)     # random noise for dev
   
@@ -244,7 +383,7 @@ get_total_conversions <- reactive({
   Conversions <- 
     with_shiny(google_analytics_3,
                id = gaid,
-               start = lubridate::today() - 120, 
+               start = lubridate::today() - DateFilter(), 
                end =  lubridate::today(),
                metrics = c('totalConversions'),
                dimensions = c('sourceMediumPath'),
@@ -256,9 +395,9 @@ get_total_conversions <- reactive({
   names(Conversions) <- c('SourceMediumPath', 'transactions')
   
   # Clean junk from results 
-  Conversions$sourceMedium <- gsub(" / ", "/", Conversions[,1])              
-  Conversions$sourceMedium <- gsub(":?(NA|CLICK|NA):?", "", Conversions[,1]) 
-  Conversions$sourceMedium <- as.numeric(Conversions[,2]) 
+  Conversions$SourceMediumPath <- gsub(" / ", "/", Conversions[,1])              
+  Conversions$SourceMediumPath <- gsub(":?(NA|CLICK|NA):?", "", Conversions[,1]) 
+  Conversions$transactions <- as.numeric(Conversions[,2]) 
   Conversions$transactions <- Conversions$transactions %>% replace_na(0)
     
   Conversions$transactions <- sample(100, size = nrow(Conversions), replace = TRUE)  # random noise for dev
@@ -269,27 +408,74 @@ get_total_conversions <- reactive({
 
 make_total_data <- reactive({
   
-  Conversions <- get_total_conversions()
-  Conversions$SourceMediumPath <- as.character(Conversions$SourceMediumPath)
-  Sessions <- get_total_sessions()
-  Sessions$SourceMediumPath <- as.character(Sessions$SourceMediumPath)
+  DataPath <- input$TestSwitch
   
-  Data <- full_join(Conversions, Sessions, by = 'SourceMediumPath')
+  if(DataPath == 'TestData'){
+    
+    test_data <- test_rate_data()
+    return(test_data)
+    
+  } else{
+    
+    Conversions <- get_total_conversions()
+    Conversions$SourceMediumPath <- as.character(Conversions$SourceMediumPath)
+    Sessions <- get_total_sessions()
+    Sessions$SourceMediumPath <- as.character(Sessions$SourceMediumPath)
   
-  Data <- 
-    Data %>% 
-    mutate(ConversionRate = ifelse(transactions == 0, 0, transactions / sessions))
+    Data <- full_join(Conversions, Sessions, by = 'SourceMediumPath')
+    Data$transactions <- as.numeric(Data$transactions)
   
-  return(Data)
+  
+    Data <-
+      Data %>%
+      mutate(ConversionRate = ifelse(transactions == 0, 0, transactions / sessions),
+             null = sessions - transactions)
+    
+    return(Data)
+    
+  } 
+  
+})
+
+make_model_data <- reactive({
+  
+  DataPath <- input$TestSwitch
+  
+  if(DataPath == 'TestData'){
+    
+    test_data <- test_data()
+    return(test_data)
+    
+  } else{
+    
+    Conversions <- get_total_conversions()
+    Conversions$SourceMediumPath <- as.character(Conversions$SourceMediumPath)
+    Sessions <- get_total_sessions()
+    Sessions$SourceMediumPath <- as.character(Sessions$SourceMediumPath)
+  
+    Data <- full_join(Conversions, Sessions, by = 'SourceMediumPath')
+    Data$transactions <- as.numeric(Data$transactions)
+  
+  
+    Data <-
+      Data %>%
+      mutate(ConversionRate = ifelse(transactions == 0, 0, transactions / sessions),
+             null = sessions - transactions)
+    
+    return(Data)
+    
+  } 
   
 })
 
 MarkovModel <- reactive({
   
-  Data <- make_total_data()
+  Data <- make_model_data()
   
   Model <- ChannelAttribution::markov_model(Data, var_path = 'SourceMediumPath', 
-                                            var_conv = 'transactions')
+                                            var_conv = 'transactions', 
+                                            var_null = 'null', 
+                                            out_more = TRUE)
 
   return(Model)
   
@@ -297,9 +483,9 @@ MarkovModel <- reactive({
 
 HeuristicModel <- reactive({
   
-  Data <- make_total_data()
+  Data <- make_model_data()
   
-  Model <- ChannelAttribution::heuristic_models(Data, var_path = 'SourceMediumPath', 
+  Model <- ChannelAttribution::heuristic_models(Data, var_path = 'SourceMediumPath',
                                                 var_conv = 'transactions')
 
   return(Model)
@@ -308,41 +494,12 @@ HeuristicModel <- reactive({
 
 ModeledData <- reactive({
   
-  MarkovModel <- MarkovModel()
+  MarkovModel <- MarkovModel()$result
   HeuristicModel <- HeuristicModel()
   
   ModeledData <- full_join(MarkovModel, HeuristicModel, by = 'channel_name')
   
 })
-
-renderHighchart({
-  
-    # only trigger once authenticated
-    req(get_device_sessions())
-
-    gadata <- get_device_sessions()
-
-    # gadata$sessions <- sample(3000, size = nrow(gadata), replace = TRUE)  # random noise for dev
-
-    hchart(gadata, 'spline' , hcaes(x = date, y = sessions,
-                                                 group = deviceCategory)) %>%
-      hc_xAxis(
-        title = list(
-          text = ''
-        )
-      ) %>%
-      hc_yAxis(
-        title = list(
-          text = ''
-        )
-      ) %>%
-      hc_title(text = 'Device Sessions By Date')
-  
-})
-
-renderTable({make_total_data()})
-
-renderTable({ModeledData()})
 
 ```
 
